@@ -1,6 +1,42 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGameServer} from './server.js';
+test('recorded videos are private until shared, require viewing, and expire on next turn',async()=>{
+  const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const base='http://127.0.0.1:'+server.address().port;
+  async function post(path,body,status=200){const r=await fetch(base+'/api/'+path,{method:'POST',body:JSON.stringify(body)});assert.equal(r.status,status);return r.json();}
+  try{
+    const a=await post('create',{name:'Creator'}),code=a.state.code,A={code,token:a.token};
+    const b=await post('join',{code,name:'Judge'}),B={code,token:b.token};
+    const headers=p=>({Authorization:'Bearer '+p.token,'X-Room':code,'Content-Type':'video/webm'});
+    const clip=Buffer.concat([Buffer.from([0x1a,0x45,0xdf,0xa3]),Buffer.alloc(64)]);
+    for(const action of ['start','draw'])await post('action',{...A,action});
+    await post('action',{...A,action:'record',video:true});
+    await post('action',{...B,action:'react',reaction:'fire'});
+    const reaction=await post('state',A);assert.equal(reaction.state.reactions.fire,1);
+    await post('action',{...B,action:'react',reaction:'fire'},429);
+    await post('action',{...A,action:'react',reaction:'fire'},403);
+    await post('action',{...A,action:'stop'});
+    await post('action',{...A,action:'publish'},400);
+    assert.equal((await fetch(base+'/api/clip',{method:'POST',headers:headers(B),body:clip})).status,403);
+    assert.equal((await fetch(base+'/api/clip',{method:'POST',headers:headers(A),body:Buffer.alloc(64)})).status,415);
+    const upload=await fetch(base+'/api/clip',{method:'POST',headers:headers(A),body:clip});assert.equal(upload.status,200);
+    const ready=await upload.json();assert.ok(ready.state.clip.id);assert.equal(ready.state.phase,'review');
+    assert.equal((await post('state',B)).state.clip,null);
+    assert.equal((await fetch(base+'/api/clip',{headers:headers(B)})).status,403);
+    assert.equal((await fetch(base+'/api/clip',{headers:{'X-Room':code}})).status,401);
+    await post('action',{...A,action:'publish'});
+    const video=await fetch(base+'/api/clip',{headers:headers(B)});assert.equal(video.status,200);assert.equal(video.headers.get('cache-control'),'no-store');assert.deepEqual(Buffer.from(await video.arrayBuffer()),clip);
+    await post('action',{...B,action:'vote',vote:'good',twist:true},409);
+    await post('action',{...B,action:'watched',clipId:'stale'},409);
+    await post('action',{...B,action:'watched',clipId:ready.state.clip.id});
+    await post('action',{...B,action:'vote',vote:'good',twist:true});
+    await post('action',{...A,action:'next'});
+    assert.equal((await fetch(base+'/api/clip',{headers:headers(B)})).status,404);
+    for(const action of ['draw','record','stop'])await post('action',{...B,action,video:true});
+    await post('action',{...B,action:'retake'});assert.equal((await post('state',B)).state.phase,'draw');
+  }finally{await new Promise(r=>server.close(r));}
+});
 test('two independent players complete a tour with private votes and synchronized scores',async()=>{
   const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const base='http://127.0.0.1:'+server.address().port;

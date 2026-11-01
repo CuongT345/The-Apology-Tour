@@ -22,8 +22,8 @@ Tests cover two-player full-game progression, scores, private pending votes with
 
 1. Each creator joins with their own name and avatar. Share the invite link or six-character code.
 2. The host selects 1–3 rounds and 45/60/90 seconds, then starts.
-3. The active creator draws a scandal and twist, then performs an apology out loud. No audio/video is transmitted or recorded. Remote players should use a separate voice call.
-4. Other players submit one private verdict and a twist vote. The server reveals aggregate results after all judges vote.
+3. The active creator draws a scandal and twist, enables camera and microphone, records an apology, previews or retakes it, then explicitly shares it with the room. Other players watch the full clip before their private vote unlocks. Camera recording is optional; an existing WebM/MP4 under 16 MB can also be chosen, or players can perform without camera.
+4. Waiting players can draw private fan art and send emoji reactions. Clearly labeled simulated chat bots post built-in comments during recording. After playback, other players submit one private verdict and a twist vote. The server reveals aggregate results after all judges vote.
 5. Forgiven earns +150,000 subscribers, Mid +25,000, and Worse −100,000 per judge. A strict majority voting that the twist was nailed adds +75,000. A redraw costs 50,000. Everyone starts at 1,000,000.
 6. The host advances through every creator. Highest final score wins; ties are shared.
 
@@ -41,6 +41,10 @@ In Render, create a Web Service from that repository:
 - Root directory: blank
 
 Alternatively, create a Render Blueprint from the included render.yaml, which explicitly selects the free plan. No database, secrets, API keys, or paid add-ons are needed. Render provides PORT automatically; the server binds to 0.0.0.0.
+
+## Video privacy and limits
+
+Camera and microphone permission is requested only after clicking Enable camera & microphone. Preview recordings stay on the creator’s device until Share apology with room is selected. Uploaded clips are authenticated to room membership; previews on the server remain accessible only to the creator until shared. Video URLs do not contain player credentials. Clips are capped at 16 MB and total server video storage at 96 MB. The current clip is cleared on retake or advancing to the next turn, when its room expires, or on service restart. There is no YouTube integration or permanent video archive. Local download and drawing save options are available. The bot comments are simulated, not AI-generated or real viewers.
 
 ## Hosting behavior
 
