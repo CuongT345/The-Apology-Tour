@@ -23,3 +23,11 @@
 .upload-label input{font-size:13px}
 input[type=radio],input[type=checkbox]{width:auto;accent-color:var(--notes)}
 #media-panel{min-width:0}
+.watch-mode .app{max-width:1080px}
+.watch-layout{display:grid!important;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:20px}
+.watch-layout>.chat-panel{grid-column:2;grid-row:1 / span 3;position:sticky;top:16px}
+.watch-layout>.record-studio,.watch-layout>.video-post,.watch-layout>.audience-play{grid-column:1}
+.watch-layout>.error,.watch-layout>#watch-before-vote{grid-column:1/-1}
+.watch-layout #bot-comments{min-height:270px}
+.camera-stage video:not(.camera-preview){transform:none}
+@media(max-width:760px){.watch-layout{grid-template-columns:minmax(0,1fr)}.watch-layout>.chat-panel{grid-column:1;grid-row:auto;position:static}.watch-layout #bot-comments{min-height:150px}}

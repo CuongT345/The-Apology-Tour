@@ -170,6 +170,8 @@ function mountExtras() {
     // Place the video above the verdict, so viewers see it before the vote controls.
     const firstHeading = app.querySelector('h2'); if (firstHeading && !panel.contains(firstHeading)) firstHeading.before(panel);
   }
+  panel.classList.toggle('watch-layout',state.phase==='record'||(state.phase==='verdict'&&!!state.clip));
+  document.body.classList.toggle('watch-mode',state.phase==='record'||(state.phase==='verdict'&&!!state.clip));
   const message = document.getElementById('media-error'); if (message) message.textContent = media.error;
   panel.querySelectorAll('[data-media=publish]').forEach(b => { b.disabled = media.uploading || (!media.blob && !state.clip); b.textContent = media.uploading ? 'Uploading…' : 'Share apology with room'; });
   if (media.uploading) panel.querySelectorAll('button,input').forEach(b => b.disabled = true);
