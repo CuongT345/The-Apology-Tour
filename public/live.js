@@ -1,6 +1,24 @@
 // One-way WebRTC broadcast: creator camera/mic -> every audience member.
 // Signaling is authenticated by the game server; media goes directly peer-to-peer.
 const live = { id: '', peers: new Map(), remote: null, video: null, selfVideo: null, queue: Promise.resolve(), error: '', readyAt: 0, starting: false };
+Object.assign(live,{soundWanted:false,audioContext:null,audioSource:null,audioGain:null,audioAnalyser:null,audioTrackId:'',audioLevel:0,audioBytes:0,audioEnergy:0});
+function disconnectAudio(){live.audioSource?.disconnect();live.audioGain?.disconnect();live.audioAnalyser?.disconnect();live.audioSource=null;live.audioGain=null;live.audioAnalyser=null;live.audioTrackId='';live.audioLevel=0;}
+function routeLiveAudio(){
+  const track=live.remote?.getAudioTracks().find(t=>t.readyState==='live');
+  if(!track||!live.audioContext||!live.soundWanted)return;
+  if(live.audioTrackId!==track.id){
+    disconnectAudio();live.audioTrackId=track.id;
+    live.audioSource=live.audioContext.createMediaStreamSource(new MediaStream([track]));
+    live.audioGain=live.audioContext.createGain();live.audioGain.gain.value=1;
+    live.audioAnalyser=live.audioContext.createAnalyser();live.audioAnalyser.fftSize=256;
+    live.audioSource.connect(live.audioGain);live.audioGain.connect(live.audioAnalyser);live.audioAnalyser.connect(live.audioContext.destination);
+  }
+}
+async function enableLiveSound(){
+  live.soundWanted=true;
+  live.audioContext??=new (window.AudioContext||window.webkitAudioContext)();
+  await live.audioContext.resume();routeLiveAudio();
+}
 const liveBaseAccept = accept, liveBaseRender = render;
 const liveActive = () => state?.liveId && ['draw', 'record'].includes(state.phase);
 const isCreator = () => state?.players[state.turn]?.id === state?.you;
@@ -10,6 +28,7 @@ const liveSignal = async (to, payload) => {
   accept(data);
 };
 function closeLive() {
+  disconnectAudio();live.audioBytes=0;live.audioEnergy=0;
   for (const { pc } of live.peers.values()) pc.close();
   live.peers.clear();live.remote = null;live.video?.remove();live.video = null;
   live.selfVideo?.remove();live.selfVideo = null;live.error = '';live.readyAt = 0;
@@ -33,8 +52,8 @@ async function offerViewer(id, restart = false) {
   peer = newPeer(id);peer.offering = true;
   // Negotiate empty senders before going live. Private preview tracks are never
   // attached until the creator explicitly presses Go live.
-  peer.video = peer.pc.addTransceiver('video', { direction: 'sendonly' }).sender;
-  peer.audio = peer.pc.addTransceiver('audio', { direction: 'sendonly' }).sender;
+  peer.video = peer.pc.addTransceiver('video', { direction: 'sendonly',streams:[media.stream] }).sender;
+  peer.audio = peer.pc.addTransceiver('audio', { direction: 'sendonly',streams:[media.stream] }).sender;
   try {
     await peer.pc.setLocalDescription(await peer.pc.createOffer());
     await liveSignal(id, { kind: 'description', description: { type: peer.pc.localDescription.type, sdp: peer.pc.localDescription.sdp } });
@@ -43,9 +62,11 @@ async function offerViewer(id, restart = false) {
 }
 async function attachTracks(peer) {
   if (!media.stream || peer.sentTracks) return;
-  peer.sentTracks = true;
-  await peer.video.replaceTrack(media.stream.getVideoTracks()[0]);
-  await peer.audio.replaceTrack(media.stream.getAudioTracks()[0]);
+  if(peer.attaching)return peer.attaching;
+  const video=media.stream.getVideoTracks()[0],audio=media.stream.getAudioTracks()[0];
+  if(!audio||audio.readyState!=='live'){live.error='No active microphone track. Reconnect camera & microphone.';return;}
+  peer.attaching=Promise.all([peer.video.replaceTrack(video),peer.audio.replaceTrack(audio)]).then(()=>{peer.sentTracks=true;}).catch(e=>{live.error='Could not send microphone/audio. Reconnect your camera and microphone.';throw e;}).finally(()=>{peer.attaching=null;});
+  return peer.attaching;
 }
 async function receiveSignal(message) {
   if (!liveActive() || message.liveId !== state.liveId) return;
@@ -74,6 +95,7 @@ accept = function(data) {
 };
 render = function() { liveBaseRender();mountLive(); };
 function mountLive() {
+  if(state?.promptsRemaining===0&&['pass','draw','board'].includes(state.phase)&&state.host===state.you&&!document.getElementById('end-used-session')){const b=document.createElement('button');b.id='end-used-session';b.className='btn ghost';b.dataset.live='endSession';b.textContent='All prompts used · End session';app.append(b);}
   const active = liveActive();
   if (!active) {
     if (live.id) { closeLive();live.id = '';if (state?.liveMode) releaseCamera(); }
@@ -87,6 +109,7 @@ function mountLive() {
     const button = panel.querySelector('[data-media=recordVideo]');if (button) {button.dataset.live = 'start';button.textContent = '● Go live to the room';}
     const description = panel.querySelector('.record-studio .lede');if (description) description.textContent = media.stream ? 'Your preview is private. Go live when ready; everyone watches together.' : 'Enable your camera and microphone, then go live. Everyone watches as you perform.';
     const uploadLabel = panel.querySelector('.upload-label');if (uploadLabel) uploadLabel.hidden = true;
+    const redraw=app.querySelector('[data-action=redraw]');if(redraw)redraw.disabled=state.promptsRemaining===0;
     let status = document.getElementById('live-ready');if (!status) {status = document.createElement('p');status.id = 'live-ready';status.className = 'status';panel.querySelector('.record-studio').append(status);}
     const connected = [...live.peers.values()].filter(p => p.pc.connectionState === 'connected').length;
     status.textContent = media.stream ? `Live connections ready: ${connected}/${state.players.length - 1}. Camera and mic stay private until Go live.` : 'Live mode · No upload or replay wait';
@@ -110,11 +133,15 @@ function mountLive() {
       if (!live.video) {live.video = document.createElement('video');live.video.autoplay = true;live.video.muted = true;live.video.playsInline = true;live.video.setAttribute('aria-label','Live apology stream');}
       if (live.video.srcObject !== live.remote) live.video.srcObject = live.remote;
       if (live.video.parentElement !== slot) slot.append(live.video);
-      if (live.video.muted) live.video.play().catch(()=>{});
+      live.video.muted=true;live.video.play().catch(()=>{});routeLiveAudio();
     }
     const connected = [...live.peers.values()].filter(p => p.pc.connectionState === 'connected').length;
-    document.getElementById('live-status').textContent = creator ? `Broadcasting to ${connected}/${state.players.length - 1} viewers. Not recorded.` : connected && live.remote ? (live.video&&!live.video.muted?'Live now · Sound on.':'Live now. Tap Enable live sound to hear the apology.') : 'Connecting to the creator…';
-    const soundButton=stage.querySelector('[data-live=sound]');if(soundButton)soundButton.textContent=live.video&&!live.video.muted?'Live sound on':'Enable live sound';
+    const soundOn=live.soundWanted&&live.audioContext?.state==='running';
+    const mic=creator?media.stream?.getAudioTracks()[0]:live.remote?.getAudioTracks()[0];
+    document.getElementById('live-status').textContent = creator ? `Broadcasting to ${connected}/${state.players.length - 1} viewers. ${mic?.enabled&&mic.readyState==='live'?'Microphone connected.':'Microphone missing or muted.'} Not recorded.` : connected && live.remote ? (soundOn?(mic?'Live now · Speaker audio enabled.':'Sound enabled · Waiting for microphone audio…'):'Tap Enable live sound to hear the apology.') : (soundOn?'Sound enabled · Connecting to the creator…':'Connecting to the creator… Enable live sound now to listen when it arrives.');
+    const soundButton=stage.querySelector('[data-live=sound]');if(soundButton)soundButton.textContent=soundOn?'Mute live sound':'Enable live sound';
+    let meter=document.getElementById('live-audio-meter');if(!meter&&!creator){meter=document.createElement('p');meter.id='live-audio-meter';meter.className='status';meter.setAttribute('role','status');stage.querySelector('#live-status').after(meter);}
+    if(meter){meter.dataset.bytes=String(live.audioBytes);meter.dataset.energy=String(live.audioEnergy);meter.dataset.level=String(live.audioLevel);meter.textContent=!soundOn?'Sound is off.':!mic?'No microphone track received yet.':live.audioLevel>.001?'Receiving microphone sound ▂▄▆█':live.audioBytes>0?'Microphone audio connected · Currently quiet.':'Waiting for microphone audio packets…';}
     const activityText=panel.querySelector('.audience-play .lede');if(activityText)activityText.textContent='Doodle while you watch the live apology. Your drawing stays on your screen.';
     document.getElementById('live-error').textContent = live.error || ([...live.peers.values()].some(p=>p.pc.connectionState==='failed'||(p.pc.connectionState!=='connected'&&Date.now()-p.created>12000)) ? 'This network is having trouble connecting directly. Try Reconnect video or another network. Some networks require a relay service.' : '');
     if(creator&&!media.stream&&!stage.querySelector('[data-live=restore]')){const restore=document.createElement('button');restore.className='btn ghost';restore.dataset.live='restore';restore.textContent='Reconnect camera & microphone';stage.append(restore);}
@@ -128,15 +155,20 @@ window.addEventListener('click', async e => {
   e.preventDefault();e.stopImmediatePropagation();
   if (busy || live.starting) return;
   const command = b.dataset.live;
-  if (command === 'sound') {if (live.video) {live.video.muted=false;try{await live.video.play();b.textContent='Live sound on';}catch{live.error='Tap again to enable sound.';}}return;}
+  if (command === 'sound') {try{if(live.soundWanted&&live.audioContext?.state==='running'){live.soundWanted=false;disconnectAudio();}else await enableLiveSound();live.error='';}catch{live.error='Your browser blocked audio. Tap Enable live sound again.';}mountLive();return;}
   if (command === 'reconnect') {for(const id of live.peers.keys())dropPeer(id);live.remote=null;live.video?.remove();live.video=null;live.error='';live.readyAt=Date.now();await liveSignal(state.players[state.turn].id,{kind:'ready'}).catch(()=>{});mountLive();return;}
   busy=true;live.starting=true;
   try {
     if (command === 'start') {if (!media.stream) await enableCamera();if(media.stream)accept(await mediaAction('record',{live:true}));}
     if(command==='restore'){media.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:360}},audio:true});media.turn=mediaTurn();for(const id of live.peers.keys())dropPeer(id);live.selfVideo=null;b.remove();}
     if (command === 'stop') {accept(await mediaAction('stop'));releaseCamera();}
+    if(command==='endSession')accept(await mediaAction('endSession'));
   } catch(e) {media.error=e.message;render();}finally{busy=false;live.starting=false;mountLive();}
 }, true);
 window.addEventListener('pagehide',closeLive);
+setInterval(async()=>{
+ if(live.audioAnalyser){const samples=new Float32Array(live.audioAnalyser.fftSize);live.audioAnalyser.getFloatTimeDomainData(samples);live.audioLevel=Math.sqrt(samples.reduce((s,n)=>s+n*n,0)/samples.length);}
+ if(!isCreator()&&state?.liveMode&&state.phase==='record')for(const {pc}of live.peers.values()){try{const stats=await pc.getStats();stats.forEach(s=>{if(s.type==='inbound-rtp'&&s.kind==='audio'){live.audioBytes=s.bytesReceived||0;live.audioEnergy=s.totalAudioEnergy||0;}});}catch{}}
+},500);
 setInterval(()=>{if(state?.liveMode&&state.phase==='record'){const t=document.getElementById('live-timer');if(t)t.textContent=Math.max(0,Math.ceil((state.deadline-Date.now())/1000))+'s';}mountLive();},1000);
 mountLive();
