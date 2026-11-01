@@ -15,10 +15,10 @@ function view(r,p){
     players:r.players.map(({id,name,av,subs,seen})=>({id,name,av,subs,online:Date.now()-seen<15000})),
     voted:Object.keys(r.votes),myVote:r.votes[p.id]??null,videoMode:!!r.videoMode,
     clip:r.clip&&(r.phase!=='review'||r.players[r.turn].id===p.id)?{id:r.clip.id,type:r.clip.type,size:r.clip.data.length}:null,
-    watched:r.watched||[],reactions:r.reactions||{},
+    watched:r.watched||[],reactions:r.reactions||{},liveMode:!!r.liveMode,liveId:r.liveId||null,
     result:r.phase==='board'||r.phase==='end'?r.result:null};
 }
-function draw(r){r.card=SCANDALS[randomInt(SCANDALS.length)];r.twist=TWISTS[randomInt(TWISTS.length)];}
+function draw(r){r.card=SCANDALS[randomInt(SCANDALS.length)];r.twist=TWISTS[randomInt(TWISTS.length)];r.liveId=token();r.signals={};r.liveMode=false;}
 function finish(r){r.phase=r.videoMode?'review':'verdict';r.votes={};r.deadline=null;}
 function act(r,p,b){
   const active=r.players[r.turn];
@@ -30,7 +30,7 @@ function act(r,p,b){
       r.rounds=[1,2,3].includes(b.rounds)?b.rounds:2;r.seconds=[45,60,90].includes(b.seconds)?b.seconds:60;r.phase='pass';break;
     case 'draw':performer();phase('pass');draw(r);r.phase='draw';break;
     case 'redraw':performer();phase('draw');active.subs-=50000;draw(r);break;
-    case 'record':performer();phase('draw');clearClip(r);r.reactions={};r.videoMode=b.video===true;r.phase='record';r.deadline=Date.now()+r.seconds*1000;break;
+    case 'record':performer();phase('draw');clearClip(r);r.reactions={};r.liveMode=b.live===true;r.videoMode=!r.liveMode&&b.video===true;r.phase='record';r.deadline=Date.now()+r.seconds*1000;break;
     case 'stop':performer();if(['review','verdict'].includes(r.phase))break;phase('record');finish(r);break;
     case 'retake':performer();phase('review');clearClip(r);r.phase='draw';r.videoMode=false;break;
     case 'publish':performer();phase('review');if(!r.clip)fail('Upload your recorded apology first.');r.phase='verdict';r.votes={};break;
@@ -90,7 +90,7 @@ export function createGameServer(){
         res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
         if(req.method!=='POST')fail('Use POST.',405);
         if(req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)fail('Invalid origin.',403);
-        let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>8192)fail('Request too large.',413);}
+        let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>32768)fail('Request too large.',413);}
         let b;try{b=JSON.parse(raw);}catch{fail('Invalid JSON.');}
         let r,p;
         if(url.pathname==='/api/create'||url.pathname==='/api/join'){
@@ -109,11 +109,25 @@ export function createGameServer(){
           r=rooms.get(String(b.code).toUpperCase());if(!r)fail('Room expired. Create a new room.',404);
           p=r.players.find(p=>p.token===b.token);if(!p)fail('Invalid player session.',401);
           if(r.phase==='record'&&Date.now()>=r.deadline)finish(r);
-          if(url.pathname==='/api/action')act(r,p,b);else if(url.pathname!=='/api/state')fail('Not found.',404);
+          if(url.pathname==='/api/action')act(r,p,b);
+          else if(url.pathname==='/api/signal'){
+            if(!['draw','record'].includes(r.phase)||b.liveId!==r.liveId)fail('This live connection has expired.',409);
+            const recipient=r.players.find(x=>x.id===b.to),performer=r.players[r.turn].id;
+            if(!recipient||recipient.id===p.id||(p.id!==performer&&recipient.id!==performer))fail('Invalid live recipient.',403);
+            const payload=b.payload;
+            if(!payload||!['description','candidate','ready'].includes(payload.kind))fail('Invalid live message.');
+            if(payload.kind==='description'&&(!['offer','answer'].includes(payload.description?.type)||typeof payload.description.sdp!=='string'||payload.description.sdp.length>20000))fail('Invalid session description.');
+            if(payload.kind==='description'&&((payload.description.type==='offer')!==(p.id===performer)))fail('Invalid live sender.',403);
+            if(payload.kind==='candidate'&&(!payload.candidate||typeof payload.candidate.candidate!=='string'||payload.candidate.candidate.length>2048))fail('Invalid connection candidate.');
+            if(payload.kind==='ready'&&p.id===performer)fail('Only viewers request a live connection.',403);
+            if(Date.now()-(p.signalWindow||0)>1000){p.signalWindow=Date.now();p.signalCount=0;}if(++p.signalCount>100)fail('Too many live messages.',429);
+            const inbox=r.signals[recipient.id]??=[];if(inbox.length>=200)fail('Live connection queue is full. Retry.',429);
+            inbox.push({from:p.id,liveId:r.liveId,payload});
+          }else if(url.pathname!=='/api/state')fail('Not found.',404);
         }
-        p.seen=Date.now();r.updated=Date.now();res.end(JSON.stringify({token:p.token,state:view(r,p)}));return;
+        p.seen=Date.now();r.updated=Date.now();res.end(JSON.stringify({token:p.token,state:view(r,p),signals:(r.signals?.[p.id]||[]).splice(0)}));return;
       }
-      const files={'/':['index.html','text/html'],'/app.js':['app.js','text/javascript'],'/media.js':['media.js','text/javascript'],'/media.css':['media.css','text/css'],'/assets.js':['assets.js','text/javascript'],'/style.css':['style.css','text/css']};
+      const files={'/':['index.html','text/html'],'/app.js':['app.js','text/javascript'],'/live.js':['live.js','text/javascript'],'/media.js':['media.js','text/javascript'],'/media.css':['media.css','text/css'],'/assets.js':['assets.js','text/javascript'],'/style.css':['style.css','text/css']};
       const file=files[url.pathname];if(!file)fail('Not found.',404);
       res.setHeader('Content-Type',file[1]+'; charset=utf-8');res.end(await readFile(new URL('./public/'+file[0],import.meta.url)));
     }catch(e){res.statusCode=e.status||500;res.end(JSON.stringify({error:e.status?e.message:'Server error.'}));}

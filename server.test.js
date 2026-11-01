@@ -1,6 +1,30 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGameServer} from './server.js';
+test('live signaling is private to the performer and addressed viewer; live ends directly in voting',async()=>{
+ const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+server.address().port;
+ async function post(path,body,status=200){const r=await fetch(base+'/api/'+path,{method:'POST',body:JSON.stringify(body)});assert.equal(r.status,status);return r.json();}
+ try{
+  const a=await post('create',{name:'Live host'}),code=a.state.code,A={code,token:a.token};
+  const b=await post('join',{code,name:'Viewer'}),B={code,token:b.token};
+  const c=await post('join',{code,name:'Other viewer'}),C={code,token:c.token};
+  await post('action',{...A,action:'start'});const draw=await post('action',{...A,action:'draw'}),liveId=draw.state.liveId;
+  assert.ok(liveId);
+  const payload={kind:'description',description:{type:'offer',sdp:'v=0\r\n'}};
+  await post('signal',{...A,liveId,to:b.state.you,payload});
+  assert.deepEqual((await post('state',C)).signals,[]);
+  const delivered=await post('state',B);assert.equal(delivered.signals.length,1);assert.equal(delivered.signals[0].from,a.state.you);assert.equal(delivered.signals[0].payload.description.type,'offer');
+  assert.deepEqual((await post('state',B)).signals,[]);
+  await post('signal',{...B,liveId,to:c.state.you,payload:{kind:'ready'}},403);
+  await post('signal',{...B,liveId:'old',to:a.state.you,payload:{kind:'ready'}},409);
+  await post('signal',{...B,liveId,to:a.state.you,payload},403);
+  const started=await post('action',{...A,action:'record',live:true,video:true});assert.equal(started.state.liveMode,true);assert.equal(started.state.videoMode,false);
+  const ended=await post('action',{...A,action:'stop'});assert.equal(ended.state.phase,'verdict');assert.equal(ended.state.clip,null);
+  await post('signal',{...B,liveId,to:a.state.you,payload:{kind:'ready'}},409);
+  await post('action',{...B,action:'vote',vote:'good',twist:true});
+ }finally{await new Promise(r=>server.close(r));}
+});
 test('recorded videos are private until shared, require viewing, and expire on next turn',async()=>{
   const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const base='http://127.0.0.1:'+server.address().port;

@@ -1,64 +1,40 @@
 # The Apology Tour
 
-A public multiplayer party game for 2–8 creators. Based on the supplied HTML game, preserving its scandal and twist decks, generated avatars, visual styling, and subscriber scoring.
+A multiplayer party game for 2–8 players. Public site: https://the-apology-tour.onrender.com/
 
-## Run
+## Play live
 
-Requires Node.js 22 or newer. There are no third-party runtime or development dependencies to install.
+Create a room and share its six-character code. Each player opens their own screen. The host selects rounds and apology length, then starts the tour.
+
+On your turn, draw your scandal, click **Enable camera & microphone**, and then **Go live to the room**. The private preview does not transmit camera or microphone tracks. Connections are prepared during preview; tracks are attached only after Go live. Viewers click **Enable live sound** to hear the apology. Simulated bot comments appear on the right of the video on desktop; phones stack them vertically. Audience members can doodle privately, save their drawing, and send emoji reactions.
+
+Ending the live apology or reaching the timer immediately opens private voting. There is no recording, upload, preview review, or replay step in the default live flow. Creators cannot vote for themselves. Everyone starts with 1M subscribers. Each judge's Forgiven vote adds 150K, Mid adds 25K, and Worse loses 100K. A strict majority accepting the twist adds 75K. Highest final score wins.
+
+Default scandals are fictional adult cheating disasters, fake relationships, influencer scandals, furry-convention chaos, and absurd nonsexual animal scandals. The original mild deck is retained in source for potential future modes.
+
+## Network behavior
+
+Live video uses one-way WebRTC from the active creator to each viewer. Authenticated, addressed signaling travels through the game server. Video and audio travel directly between browsers. Public Google STUN servers help discover direct connections. No TURN relay is provisioned, so restrictive NATs, corporate firewalls, or some mobile networks may prevent video from connecting. The UI exposes reconnect controls and connection status. Broad cross-network reliability would require a TURN relay or managed real-time media provider.
+
+Live sessions are not recorded or uploaded. Browsers request camera and microphone permission only through the player's action. Media tracks stop on leaving, ending the apology, or closing the page. The previous room-private recorded-video implementation remains in code for compatibility, including authenticated clip access, a 16 MB per-clip limit, watch-before-vote, and clearing on turn changes.
+
+## Run and test
+
+Requires Node 22 or newer; no third-party dependencies.
 
 ```sh
 node server.js
-```
-
-Open http://localhost:3000. Create a room, then join its code from another device or a separately opened browser tab. Player credentials live in tab-scoped sessionStorage and survive page reloads. Use separate tabs opened independently rather than duplicating a signed-in player tab.
-
-```sh
 node --test
 ```
 
-Tests cover two-player full-game progression, scores, private pending votes with three players, duplicate vote rejection, host/performer permissions, invalid sessions, and rematches.
+The server binds to `0.0.0.0` using Render's `PORT` (3000 locally). `/health` returns readiness. Four integration tests cover live signaling authorization and immediate voting, recorded clip privacy, full-game scores, and private pending votes. Local browser QA uses synthetic camera/audio in a separate, undeployed harness; it verified live transmission, sound enablement, reconnection after reload, reactions, and side-by-side chat layout.
 
-## Play
+## Render
 
-1. Each creator joins with their own name and avatar. Share the invite link or six-character code.
-2. The host selects 1–3 rounds and 45/60/90 seconds, then starts.
-3. The active creator draws a scandal and twist, enables camera and microphone, records an apology, previews or retakes it, then explicitly shares it with the room. Other players watch the full clip before their private vote unlocks. Camera recording is optional; an existing WebM/MP4 under 16 MB can also be chosen, or players can perform without camera.
-4. Waiting players can draw private fan art and send emoji reactions. Clearly labeled simulated chat bots post built-in comments during recording. After playback, other players submit one private verdict and a twist vote. The server reveals aggregate results after all judges vote.
-5. Forgiven earns +150,000 subscribers, Mid +25,000, and Worse −100,000 per judge. A strict majority voting that the twist was nailed adds +75,000. A redraw costs 50,000. Everyone starts at 1,000,000.
-6. The host advances through every creator. Highest final score wins; ties are shared.
-
-## Deploy with GitHub and Render
-
-Upload this directory as a GitHub repository. The repository root must contain package.json and server.js.
-
-In Render, create a Web Service from that repository:
-
-- Runtime: Node
-- Build command: `node --check server.js`
-- Start command: `node server.js`
-- Instance type: Free
+- Plan: Free, one instance
+- Build: `node --check server.js && node --test`
+- Start: `node server.js`
 - Health check: `/health`
 - Root directory: blank
 
-Alternatively, create a Render Blueprint from the included render.yaml, which explicitly selects the free plan. No database, secrets, API keys, or paid add-ons are needed. Render provides PORT automatically; the server binds to 0.0.0.0.
-
-## Video privacy and limits
-
-Camera and microphone permission is requested only after clicking Enable camera & microphone. Preview recordings stay on the creator’s device until Share apology with room is selected. Uploaded clips are authenticated to room membership; previews on the server remain accessible only to the creator until shared. Video URLs do not contain player credentials. Clips are capped at 16 MB and total server video storage at 96 MB. The current clip is cleared on retake or advancing to the next turn, when its room expires, or on service restart. There is no YouTube integration or permanent video archive. Local download and drawing save options are available. The bot comments are simulated, not AI-generated or real viewers.
-
-## Hosting behavior
-
-The server uses same-origin HTTP requests, polling once per second for synchronized state. Votes, permissions, timers, and scores are controlled by the server, not trusted from browsers. Individual vote choices are returned only to the player who cast them; other players receive completion status and aggregate results.
-
-Rooms reside in one process's memory. Use one Render instance. Rooms reset on restart, redeploy, or free-service spin-down; abandoned rooms expire after six hours without activity. Free Render services sleep after 15 minutes with no inbound traffic, and the next visit can take about a minute to wake the server. Reload restores a player's identity while their room still exists. A player who closes their tab or clears its storage may lose access to that seat. All joined judges must vote before results appear.
-
-## Verification completed locally
-
-- `node --check` passed for server.js, public/app.js, and public/assets.js.
-- `node --test` passed both multiplayer integration tests.
-- Two independent browser tabs joined the same room as Alice and Bob.
-- Each performed a turn and cast the other creator's private vote.
-- Both saw identical final scores: Alice 1,225,000, Bob 900,000.
-- Reloading Bob's tab restored his identity and final results.
-
-Public deployment and post-deployment testing still require GitHub/Render account authorization.
+Rooms and transient signaling reside in one process's memory and reset on restart or redeploy. Free instances sleep after 15 minutes without inbound traffic and may take about a minute to wake. Active room polling supplies traffic during play. This public-repository deployment uses manual deployment for source changes.
