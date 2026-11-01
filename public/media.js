@@ -124,7 +124,7 @@ function drawingBoard() {
   if (media.canvas.parentElement !== slot) slot.append(media.canvas);
 }
 function chatHTML() {
-  return `<section class="chat-panel"><div class="chat-heading"><b>Live chat</b><small>SIMULATED BOTS</small></div><div id="bot-comments"></div><div id="reaction-counts" class="reaction-totals"></div></section>`;
+  return `<section class="chat-panel"><div class="chat-heading"><b>${state.phase === 'verdict' ? 'Chat replay' : 'Live chat'}</b><small>SIMULATED BOTS</small></div>${state.phase === 'verdict' ? '<p class="status" id="chat-replay-status" style="padding:10px 14px 0">Press play to start the chat reactions.</p>' : ''}<div id="bot-comments"></div><div id="reaction-counts" class="reaction-totals"></div></section>`;
 }
 function activitiesHTML() {
   return `<section class="audience-play"><div class="eyebrow">Backstage pass</div><h2>Make some fan art.</h2><p class="lede">Doodle while the creator records. Your drawing stays on your screen.</p><div id="drawing-slot"></div><div class="row"><button class="chip" data-media="clearDrawing">Clear drawing</button><button class="chip" data-media="saveDrawing">Save drawing</button><label class="pen-color">Ink <input id="ink-color" type="color" value="#2a2410" aria-label="Drawing ink color"></label></div>${state.phase === 'record' ? `<p>Send a reaction to the creator</p><div class="row">${Object.entries(icons).map(([k, icon]) => `<button class="reaction-btn" data-media="react" data-reaction="${k}" aria-label="Send ${k} reaction">${icon}</button>`).join('')}</div>` : ''}</section>`;
@@ -150,7 +150,7 @@ function mountExtras() {
       html = `${mine && state.videoMode ? '<section class="record-studio"><div class="studio-label"><span class="rec-dot">● REC</span><span id="camera-timer"></span></div><div id="camera-slot" class="camera-stage"></div><div class="prompt-overlay">' + esc(state.card[0]) + '<small>Twist: ' + esc(state.twist) + '</small></div>' + mediaButton('■ Stop & preview', 'stopCapture') + '</section>' : ''}${chatHTML()}${!mine ? activitiesHTML() : ''}`;
     }
     if (state.phase === 'review') html = mine ? `<div class="eyebrow">Your final cut</div><h1>Before you post.</h1><section class="video-post"><div id="clip-preview-slot"></div><p class="status">${media.blob ? 'Preview with sound. Your clip stays private until you share it.' : state.clip ? 'Your apology is uploaded and ready to share.' : 'No recording found. Retake your apology or choose a video.'}</p></section>${!media.blob && state.clip ? sharedHTML() : ''}${mediaButton('Share apology with room', 'publish', !media.blob && !state.clip)}${mediaButton('Retake apology', 'retake', false, 'ghost')}<label class="upload-label">Choose another video<input id="video-file" type="file" accept="video/webm,video/mp4"></label><button class="linkbtn" data-media="skipVideo">Continue without video</button><p class="status">Room-only playback. The clip is cleared when the tour advances.</p>` : `<h2>Editing the apology…</h2><p class="lede">The creator is reviewing their final take.</p>${chatHTML()}${activitiesHTML()}`;
-    if (state.phase === 'verdict' && state.clip) html = sharedHTML() + '<p id="watch-before-vote" class="rules">Watch the apology to the end to unlock your private vote.</p>';
+    if (state.phase === 'verdict' && state.clip) html = sharedHTML() + chatHTML() + '<p id="watch-before-vote" class="rules">Watch the apology to the end to unlock your private vote.</p>';
     panel.innerHTML = html + '<p class="error" id="media-error" role="alert"></p>';
     const foot = app.querySelector('.foot'); app.insertBefore(panel, foot || null);
   }
@@ -183,8 +183,14 @@ function mediaTick() {
   const timer = document.getElementById('camera-timer'); if (timer) timer.textContent = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000)) + 's';
   const box = document.getElementById('bot-comments');
   if (box) {
-    const i = Math.floor(Math.max(0, Date.now() - media.started) / 3500), key = String(i);
+    // Replay follows the actual video clock: pausing freezes it, seeking and
+    // replaying restore the comments associated with that point in the clip.
+    const replay = state?.phase === 'verdict' && !!state.clip;
+    const elapsed = replay ? (media.roomVideo?.currentTime || 0) * 1000 : Date.now() - media.started;
+    const i = Math.floor(Math.max(0, elapsed) / 3500), key = `${replay ? state.clip.id : mediaTurn()}:${i}`;
     if (box.dataset.key !== key) { box.dataset.key = key; box.innerHTML = Array.from({ length: Math.min(4, i + 1) }, (_, n) => { const [name, text] = chatLines[(Math.max(0, i - 3) + n) % chatLines.length]; return `<div class="bot-comment"><b>${name}</b><small>BOT</small><span>${text}</span></div>`; }).join(''); }
+    const status = document.getElementById('chat-replay-status');
+    if (status) status.textContent = media.roomVideo?.ended ? 'Replay the video to replay the chat.' : media.roomVideo?.paused ? (elapsed ? 'Chat paused with the video.' : 'Press play to start the chat reactions.') : 'Chat reactions follow this video. Comments are simulated.';
   }
   const counts = document.getElementById('reaction-counts');
   if (counts) counts.innerHTML = Object.entries(icons).map(([k, icon]) => `<span>${icon} ${state.reactions?.[k] || 0}</span>`).join('');
