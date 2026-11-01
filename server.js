@@ -15,10 +15,16 @@ function view(r,p){
     players:r.players.map(({id,name,av,subs,seen})=>({id,name,av,subs,online:Date.now()-seen<15000})),
     voted:Object.keys(r.votes),myVote:r.votes[p.id]??null,videoMode:!!r.videoMode,
     clip:r.clip&&(r.phase!=='review'||r.players[r.turn].id===p.id)?{id:r.clip.id,type:r.clip.type,size:r.clip.data.length}:null,
-    watched:r.watched||[],reactions:r.reactions||{},liveMode:!!r.liveMode,liveId:r.liveId||null,
+    watched:r.watched||[],reactions:r.reactions||{},liveMode:!!r.liveMode,liveId:r.liveId||null,promptsRemaining:Math.min(r.scandalDeck?.length??SCANDALS.length,r.twistDeck?.length??TWISTS.length),
     result:r.phase==='board'||r.phase==='end'?r.result:null};
 }
-function draw(r){r.card=SCANDALS[randomInt(SCANDALS.length)];r.twist=TWISTS[randomInt(TWISTS.length)];r.liveId=token();r.signals={};r.liveMode=false;}
+function shuffledIndexes(length){const deck=Array.from({length},(_,i)=>i);for(let i=length-1;i>0;i--){const j=randomInt(i+1);[deck[i],deck[j]]=[deck[j],deck[i]];}return deck;}
+function resetDecks(r){r.scandalDeck=shuffledIndexes(SCANDALS.length);r.twistDeck=shuffledIndexes(TWISTS.length);}
+function draw(r){
+  if(!r.scandalDeck||!r.twistDeck)resetDecks(r);
+  if(!r.scandalDeck.length||!r.twistDeck.length)fail('All session prompts have been used. Finish this apology, then end the session to start a fresh deck.',409);
+  r.card=SCANDALS[r.scandalDeck.pop()];r.twist=TWISTS[r.twistDeck.pop()];r.liveId=token();r.signals={};r.liveMode=false;
+}
 function finish(r){r.phase=r.videoMode?'review':'verdict';r.votes={};r.deadline=null;}
 function act(r,p,b){
   const active=r.players[r.turn];
@@ -29,7 +35,7 @@ function act(r,p,b){
     case 'start': host();phase('lobby');if(r.players.length<2)fail('At least two creators must join.');
       r.rounds=[1,2,3].includes(b.rounds)?b.rounds:2;r.seconds=[45,60,90].includes(b.seconds)?b.seconds:60;r.phase='pass';break;
     case 'draw':performer();phase('pass');draw(r);r.phase='draw';break;
-    case 'redraw':performer();phase('draw');active.subs-=50000;draw(r);break;
+    case 'redraw':performer();phase('draw');draw(r);active.subs-=50000;break;
     case 'record':performer();phase('draw');clearClip(r);r.reactions={};r.liveMode=b.live===true;r.videoMode=!r.liveMode&&b.video===true;r.phase='record';r.deadline=Date.now()+r.seconds*1000;break;
     case 'stop':performer();if(['review','verdict'].includes(r.phase))break;phase('record');finish(r);break;
     case 'retake':performer();phase('review');clearClip(r);r.phase='draw';r.videoMode=false;break;
@@ -49,7 +55,8 @@ function act(r,p,b){
       }break;
     case 'next':host();phase('board');clearClip(r);r.turn++;if(r.turn===r.players.length){r.turn=0;r.round++;}
       r.phase=r.round>r.rounds?'end':'pass';r.votes={};break;
-    case 'again':host();phase('end');clearClip(r);r.players.forEach(x=>x.subs=1000000);r.round=1;r.turn=0;r.votes={};r.phase='lobby';break;
+    case 'endSession':host();if(!['pass','draw','board'].includes(r.phase))fail('Finish the current apology first.',409);if((r.scandalDeck?.length??1)>0&&(r.twistDeck?.length??1)>0)fail('The session still has unused prompts.',409);clearClip(r);r.phase='end';break;
+    case 'again':host();phase('end');clearClip(r);resetDecks(r);r.players.forEach(x=>x.subs=1000000);r.round=1;r.turn=0;r.votes={};r.phase='lobby';break;
     default:fail('Unknown action.');
   }
 }

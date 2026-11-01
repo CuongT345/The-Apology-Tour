@@ -1,6 +1,21 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGameServer} from './server.js';
+import {SCANDALS,TWISTS} from './cards.js';
+test('session decks never repeat, exhaustion does not charge, and a finished session resets the decks',async()=>{
+ const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ async function post(path,body,status=200){const r=await fetch('http://127.0.0.1:'+server.address().port+'/api/'+path,{method:'POST',body:JSON.stringify(body)});assert.equal(r.status,status);return r.json();}
+ try{
+  const a=await post('create',{name:'Host'}),code=a.state.code,A={code,token:a.token};await post('join',{code,name:'Judge'});
+  await post('action',{...A,action:'start'});let x=await post('action',{...A,action:'draw'});
+  const seen=new Set([x.state.card[0]]),twists=new Set([x.state.twist]);const count=Math.min(SCANDALS.length,TWISTS.length);
+  for(let i=1;i<count;i++){x=await post('action',{...A,action:'redraw'});assert.equal(seen.has(x.state.card[0]),false);assert.equal(twists.has(x.state.twist),false);seen.add(x.state.card[0]);twists.add(x.state.twist);}
+  assert.equal(x.state.promptsRemaining,0);const balance=x.state.players[0].subs;
+  await post('action',{...A,action:'redraw'},409);assert.equal((await post('state',A)).state.players[0].subs,balance);
+  await post('action',{...A,action:'endSession'});const reset=await post('action',{...A,action:'again'});assert.equal(reset.state.promptsRemaining,count);
+  await post('action',{...A,action:'start'});const fresh=await post('action',{...A,action:'draw'});assert.ok(seen.has(fresh.state.card[0]));assert.equal(fresh.state.promptsRemaining,count-1);
+ }finally{await new Promise(r=>server.close(r));}
+});
 test('live signaling is private to the performer and addressed viewer; live ends directly in voting',async()=>{
  const server=createGameServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const base='http://127.0.0.1:'+server.address().port;

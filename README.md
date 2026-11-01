@@ -10,7 +10,7 @@ On your turn, draw your scandal, click **Enable camera & microphone**, and then 
 
 Ending the live apology or reaching the timer immediately opens private voting. There is no recording, upload, preview review, or replay step in the default live flow. Creators cannot vote for themselves. Everyone starts with 1M subscribers. Each judge's Forgiven vote adds 150K, Mid adds 25K, and Worse loses 100K. A strict majority accepting the twist adds 75K. Highest final score wins.
 
-Default scandals are fictional adult cheating disasters, fake relationships, influencer scandals, furry-convention chaos, and absurd nonsexual animal scandals. The original mild deck is retained in source for potential future modes.
+Default scandals are fictional adult cheating disasters, fake relationships, influencer scandals, furry-convention chaos, and absurd nonsexual animal scandals. The original mild deck is retained in source for potential future modes. The 48 scandals and 48 twists are shuffled into per-session decks and consumed without replacement, including redraws. They reset only after the finished session is restarted. If the decks are exhausted, further redraws are blocked without charging subscribers and the host can end that session.
 
 ## Network behavior
 
@@ -27,7 +27,7 @@ node server.js
 node --test
 ```
 
-The server binds to `0.0.0.0` using Render's `PORT` (3000 locally). `/health` returns readiness. Four integration tests cover live signaling authorization and immediate voting, recorded clip privacy, full-game scores, and private pending votes. Local browser QA uses synthetic camera/audio in a separate, undeployed harness; it verified live transmission, sound enablement, reconnection after reload, reactions, and side-by-side chat layout.
+The server binds to `0.0.0.0` using Render's `PORT` (3000 locally). `/health` returns readiness. Five integration tests cover session deck uniqueness/reset/exhaustion, live signaling authorization and immediate voting, recorded clip privacy, full-game scores, and private pending votes. Local browser QA uses synthetic camera/audio in a separate, undeployed harness. The speaker path uses a user-enabled Web Audio graph independent of the muted video preview and survives game screen updates. An indicator reports received audio packets and decoded sound level. Browser QA verified nonzero decoded audio samples, reactions, mute/unmute, and reconnect.
 
 ## Render
 
